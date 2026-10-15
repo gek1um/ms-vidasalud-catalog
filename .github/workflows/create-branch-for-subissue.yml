@@ -1,0 +1,93 @@
+name: Create branch for sub-issue
+
+on:
+  issues:
+    types:
+      - opened
+      - labeled
+
+permissions:
+  contents: write
+  issues: read
+
+jobs:
+  create-branch:
+    if: >
+      github.event.action == 'opened' ||
+      (github.event.action == 'labeled' &&
+       github.event.label.name == 'create-branch')
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check if issue is a sub-issue
+        id: check-parent
+        env:
+          GH_TOKEN: ${{ secrets.VIDASALUD_PROJECT_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          # Esperamos unos segundos porque al crear un sub-issue
+          # GitHub puede tardar un instante en registrar la relación padre/hijo.
+          sleep 3
+
+          if gh api \
+            "repos/$REPOSITORY/issues/$ISSUE_NUMBER/parent" \
+            --header "X-GitHub-Api-Version: 2026-03-10" \
+            > /tmp/parent.json 2>/dev/null; then
+
+            echo "is_subissue=true" >> "$GITHUB_OUTPUT"
+            echo "Sub-issue detected"
+          else
+            echo "is_subissue=false" >> "$GITHUB_OUTPUT"
+            echo "Normal/parent issue detected"
+          fi
+
+      - name: Generate branch name
+        if: steps.check-parent.outputs.is_subissue == 'true'
+        id: branch
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+        run: |
+          SLUG=$(echo "$ISSUE_TITLE" \
+            | tr '[:upper:]' '[:lower:]' \
+            | iconv -f utf-8 -t ascii//TRANSLIT \
+            | sed 's/[^a-z0-9]/-/g' \
+            | sed 's/-\+/-/g' \
+            | sed 's/^-//' \
+            | sed 's/-$//' \
+            | cut -c1-45)
+
+          BRANCH_NAME="feature/${ISSUE_NUMBER}-${SLUG}"
+
+          echo "name=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
+          echo "Branch: $BRANCH_NAME"
+
+      - name: Create branch linked to issue
+        if: steps.check-parent.outputs.is_subissue == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.VIDASALUD_PROJECT_TOKEN }}
+          ISSUE_ID: ${{ github.event.issue.node_id }}
+          BRANCH_NAME: ${{ steps.branch.outputs.name }}
+          BASE_SHA: ${{ github.sha }}
+        run: |
+          gh api graphql \
+            -f query='
+              mutation($issueId: ID!, $name: String!, $oid: GitObjectID!) {
+                createLinkedBranch(input: {
+                  issueId: $issueId,
+                  name: $name,
+                  oid: $oid
+                }) {
+                  linkedBranch {
+                    ref {
+                      name
+                    }
+                  }
+                }
+              }
+            ' \
+            -f issueId="$ISSUE_ID" \
+            -f name="$BRANCH_NAME" \
+            -f oid="$BASE_SHA"
