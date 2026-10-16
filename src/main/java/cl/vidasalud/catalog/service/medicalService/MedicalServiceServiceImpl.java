@@ -61,7 +61,7 @@ public class MedicalServiceServiceImpl
                 .toList();
     }
 
-
+    //CAMBIO REALIZO PARA PROBAR LOS TESTS, VERIFICAR SI SIGUE FUNCIONANDO EN POSTMAN DESPUES DE
     @Override
     @Transactional(readOnly = true)
     public MedicalServiceResponse findById(Long id) {
@@ -69,9 +69,8 @@ public class MedicalServiceServiceImpl
         MedicalService service =
                 medicalServiceRepository.findById(id)
                         .orElseThrow(() ->
-                                new RuntimeException(
-                                        "Medical service not found with id: "
-                                                + id
+                                new ResourceNotFoundException(
+                                        "Medical service not found with id: " + id
                                 )
                         );
 
